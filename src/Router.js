@@ -1,0 +1,30 @@
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+import { Navigate, Route, Routes } from 'react-router-dom';
+import { AccountPage } from './pages/account';
+import { MembershipAndBilling } from './pages/account/MembershipAndBilling';
+import { Profile } from './pages/account/Profile';
+import { Provider } from './pages/account/Provider';
+import { CarePlanPage } from './pages/care-plan';
+import { ActionItem } from './pages/care-plan/ActionItem';
+import { ActionItems } from './pages/care-plan/ActionItems';
+import { GetCare } from './pages/GetCarePage';
+import { HealthRecord } from './pages/health-record';
+import { LabResult } from './pages/health-record/LabResult';
+import { LabResults } from './pages/health-record/LabResults';
+import { Measurement } from './pages/health-record/Measurement';
+import { Medication } from './pages/health-record/Medication';
+import { Medications } from './pages/health-record/Medications';
+import { Responses } from './pages/health-record/Responses';
+import { Response } from './pages/health-record/Response';
+import { Vaccine } from './pages/health-record/Vaccine';
+import { Vaccines } from './pages/health-record/Vaccines';
+import { Vitals } from './pages/health-record/Vitals';
+import { HomePage } from './pages/HomePage';
+import { MessageTable } from './pages/MessageTablePage';
+import { Messages } from './pages/MessagesPage';
+import { QuestionnairePage } from './pages/QuestionnairePage';
+import { ObservationPage } from './pages/ObservationPage';
+import { SignOutPage } from './pages/SignOutPage';
+export function Router() {
+    return (_jsxs(Routes, { children: [_jsx(Route, { path: "/", element: _jsx(HomePage, {}) }), _jsx(Route, { path: "messages/", element: _jsx(MessageTable, {}) }), _jsx(Route, { path: "messages/:practitionerId", element: _jsx(Messages, {}) }), _jsx(Route, { path: "Questionnaire/:questionnaireId", element: _jsx(QuestionnairePage, {}) }), _jsxs(Route, { path: "health-record/*", element: _jsx(HealthRecord, {}), children: [_jsx(Route, { index: true, element: _jsx(Navigate, { replace: true, to: "/health-record/lab-results" }) }), _jsx(Route, { path: "lab-results/*", element: _jsx(LabResults, {}) }), _jsx(Route, { path: "lab-results/:resultId", element: _jsx(LabResult, {}) }), _jsx(Route, { path: "medications", element: _jsx(Medications, {}) }), _jsx(Route, { path: "medications/:medicationId", element: _jsx(Medication, {}) }), _jsx(Route, { path: "questionnaire-responses", element: _jsx(Responses, {}) }), _jsx(Route, { path: "questionnaire-responses/:responseId", element: _jsx(Response, {}) }), _jsx(Route, { path: "vaccines", element: _jsx(Vaccines, {}) }), _jsx(Route, { path: "vaccines/:vaccineId", element: _jsx(Vaccine, {}) }), _jsx(Route, { path: "vitals", element: _jsx(Vitals, {}) }), _jsx(Route, { path: "vitals/:measurementId", element: _jsx(Measurement, {}) })] }), _jsx(Route, { path: "Observation/:observationId", element: _jsx(ObservationPage, {}) }), _jsxs(Route, { path: "care-plan/*", element: _jsx(CarePlanPage, {}), children: [_jsx(Route, { index: true, element: _jsx(Navigate, { replace: true, to: "/care-plan/action-items" }) }), _jsx(Route, { path: "action-items", element: _jsx(ActionItems, {}) }), _jsx(Route, { path: "action-items/:itemId", element: _jsx(ActionItem, {}) })] }), _jsx(Route, { path: "get-care/*", element: _jsx(GetCare, {}) }), _jsxs(Route, { path: "account/*", element: _jsx(AccountPage, {}), children: [_jsx(Route, { index: true, element: _jsx(Navigate, { replace: true, to: "/account/profile" }) }), _jsx(Route, { path: "profile", element: _jsx(Profile, {}) }), _jsx(Route, { path: "provider/*", element: _jsx(Provider, {}) }), _jsx(Route, { path: "membership-and-billing", element: _jsx(MembershipAndBilling, {}) })] }), _jsx(Route, { path: "signout", element: _jsx(SignOutPage, {}) })] }));
+}
