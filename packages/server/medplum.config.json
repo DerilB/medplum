@@ -7,7 +7,7 @@
   "authorizeUrl": "http://localhost:8103/oauth2/authorize",
   "tokenUrl": "http://localhost:8103/oauth2/token",
   "userInfoUrl": "http://localhost:8103/oauth2/userinfo",
-  "appBaseUrl": "http://localhost:3000/",
+  "appBaseUrl": "http://www.cedarhouse.io/",
   "binaryStorage": "file:./binary/",
   "storageBaseUrl": "http://localhost:8103/storage/",
   "signingKeyId": "my-key-id",
