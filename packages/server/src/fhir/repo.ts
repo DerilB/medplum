@@ -64,7 +64,7 @@ import { Pool, PoolClient } from 'pg';
 import { Operation, applyPatch } from 'rfc6902';
 import validator from 'validator';
 import { getConfig } from '../config';
-import { getLogger, getRequestContext } from '../context';
+import { getLogger, getRequestContext, tryGetRequestContext } from '../context';
 import { DatabaseMode, getDatabasePool } from '../database';
 import { getRedis } from '../redis';
 import { r4ProjectId } from '../seed';
@@ -95,6 +95,7 @@ import { getPatients } from './patient';
 import { replaceConditionalReferences, validateReferences } from './references';
 import { getFullUrl } from './response';
 import { RewriteMode, rewriteAttachments } from './rewrite';
+import { buildSearchExpression, searchByReferenceImpl, searchImpl } from './search';
 import {
   Condition,
   DeleteQuery,
@@ -106,7 +107,6 @@ import {
   periodToRangeString,
 } from './sql';
 import { getBinaryStorage } from './storage';
-import { buildSearchExpression, searchImpl } from './search';
 
 /**
  * The RepositoryContext interface defines standard metadata for repository actions.
@@ -406,7 +406,7 @@ export class Repository extends BaseRepository implements FhirRepository<PoolCli
     let parts: [T['resourceType'], string];
     try {
       parts = parseReference(reference);
-    } catch (err) {
+    } catch (_err) {
       throw new OperationOutcomeError(badRequest('Invalid reference'));
     }
     return this.readResource(parts[0], parts[1]);
@@ -894,7 +894,6 @@ export class Repository extends BaseRepository implements FhirRepository<PoolCli
    * When doing a bulk reindex, this will be more efficient because it avoids unnecessary reads.
    * @param conn - Database client to use for reindex operations.
    * @param resources - The resource(s) to reindex.
-   * @returns The reindexed resource.
    */
   async reindexResources<T extends Resource>(conn: PoolClient, ...resources: T[]): Promise<void> {
     let resource: Resource;
@@ -904,9 +903,9 @@ export class Repository extends BaseRepository implements FhirRepository<PoolCli
       resource = resources[i];
       (resource.meta as Meta).compartment = this.getCompartments(resource);
 
-      await this.writeResource(conn, resource);
       await this.writeLookupTables(conn, resource, false);
     }
+    await this.batchWriteResources(conn, ...resources);
   }
 
   /**
@@ -1096,6 +1095,21 @@ export class Repository extends BaseRepository implements FhirRepository<PoolCli
     }
   }
 
+  async searchByReference<T extends Resource>(
+    searchRequest: SearchRequest<T>,
+    referenceField: string,
+    references: string[]
+  ): Promise<Record<string, T[]>> {
+    try {
+      const result = await searchByReferenceImpl<T>(this, searchRequest, referenceField, references);
+      this.logEvent(SearchInteraction, AuditEventOutcome.Success, undefined, undefined, searchRequest);
+      return result;
+    } catch (err) {
+      this.logEvent(SearchInteraction, AuditEventOutcome.MinorFailure, err, undefined, searchRequest);
+      throw err;
+    }
+  }
+
   /**
    * Adds filters to ignore soft-deleted resources.
    * @param builder - The select query builder.
@@ -1172,20 +1186,13 @@ export class Repository extends BaseRepository implements FhirRepository<PoolCli
     }
   }
 
-  /**
-   * Writes the resource to the resource table.
-   * This builds all search parameter columns.
-   * This does *not* write the version to the history table.
-   * @param client - The database client inside the transaction.
-   * @param resource - The resource.
-   */
-  private async writeResource(client: PoolClient, resource: Resource): Promise<void> {
+  private buildResourceRow(resource: Resource): Record<string, any> {
     const resourceType = resource.resourceType;
     const meta = resource.meta as Meta;
     const compartments = meta.compartment?.map((ref) => resolveId(ref));
     const content = stringify(resource);
 
-    const columns: Record<string, any> = {
+    const row: Record<string, any> = {
       id: resource.id,
       lastUpdated: meta.lastUpdated,
       deleted: false,
@@ -1197,11 +1204,34 @@ export class Repository extends BaseRepository implements FhirRepository<PoolCli
     const searchParams = getSearchParameters(resourceType);
     if (searchParams) {
       for (const searchParam of Object.values(searchParams)) {
-        this.buildColumn(resource, columns, searchParam);
+        this.buildColumn(resource, row, searchParam);
       }
     }
+    return row;
+  }
 
-    await new InsertQuery(resourceType, [columns]).mergeOnConflict().execute(client);
+  /**
+   * Writes the resource to the resource table.
+   * This builds all search parameter columns.
+   * This does *not* write the version to the history table.
+   * @param client - The database client inside the transaction.
+   * @param resource - The resource.
+   */
+  private async writeResource(client: PoolClient, resource: Resource): Promise<void> {
+    await new InsertQuery(resource.resourceType, [this.buildResourceRow(resource)]).mergeOnConflict().execute(client);
+  }
+
+  private async batchWriteResources(client: PoolClient, ...resources: Resource[]): Promise<void> {
+    if (!resources.length) {
+      return;
+    }
+
+    await new InsertQuery(
+      resources[0].resourceType,
+      resources.map((r) => this.buildResourceRow(r))
+    )
+      .mergeOnConflict()
+      .execute(client);
   }
 
   /**
@@ -1352,7 +1382,7 @@ export class Repository extends BaseRepository implements FhirRepository<PoolCli
       try {
         const date = new Date(value);
         return date.toISOString().substring(0, 10);
-      } catch (ex) {
+      } catch (_err) {
         // Silent ignore
       }
     }
@@ -1371,7 +1401,7 @@ export class Repository extends BaseRepository implements FhirRepository<PoolCli
       try {
         const date = new Date(value);
         return date.toISOString();
-      } catch (ex) {
+      } catch (_err) {
         // Silent ignore
       }
     } else if (typeof value === 'object') {
@@ -2029,6 +2059,7 @@ export class Repository extends BaseRepository implements FhirRepository<PoolCli
     this.transactionDepth++;
     const conn = await this.getConnection(DatabaseMode.WRITER);
     if (this.transactionDepth === 1) {
+      await conn.query(`SET application_name TO '${tryGetRequestContext()?.requestId ?? ''}'`);
       await conn.query('BEGIN ISOLATION LEVEL ' + isolationLevel);
     } else {
       await conn.query('SAVEPOINT sp' + this.transactionDepth);

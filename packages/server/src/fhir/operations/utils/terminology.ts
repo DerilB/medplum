@@ -1,6 +1,6 @@
 import { OperationOutcomeError, Operator, badRequest, createReference, resolveId } from '@medplum/core';
 import { getAuthenticatedContext } from '../../../context';
-import { CodeSystem, CodeSystemConceptProperty, ConceptMap, Reference, ValueSet } from '@medplum/fhirtypes';
+import { CodeSystem, CodeSystemProperty, ConceptMap, Reference, ValueSet } from '@medplum/fhirtypes';
 import { SelectQuery, Conjunction, Condition, Column, Union } from '../../sql';
 import { getSystemRepo } from '../../repo';
 
@@ -72,7 +72,8 @@ function sameTerminologyResourceVersion(a: TerminologyResource, b: TerminologyRe
 
 export function addPropertyFilter(query: SelectQuery, property: string, value: string, isEqual?: boolean): SelectQuery {
   const propertyTable = query.getNextJoinAlias();
-  query.leftJoin(
+  query.join(
+    'LEFT JOIN',
     'Coding_Property',
     propertyTable,
     new Conjunction([
@@ -82,7 +83,8 @@ export function addPropertyFilter(query: SelectQuery, property: string, value: s
   );
 
   const csPropertyTable = query.getNextJoinAlias();
-  query.leftJoin(
+  query.join(
+    'LEFT JOIN',
     'CodeSystem_Property',
     csPropertyTable,
     new Conjunction([
@@ -107,14 +109,16 @@ export function findAncestor(base: SelectQuery, codeSystem: CodeSystem, ancestor
     .column('display')
     .where('system', '=', codeSystem.id);
   const propertyTable = query.getNextJoinAlias();
-  query.innerJoin(
+  query.join(
+    'INNER JOIN',
     'Coding_Property',
     propertyTable,
     new Condition(new Column('Coding', 'id'), '=', new Column(propertyTable, 'target'))
   );
 
   const csPropertyTable = query.getNextJoinAlias();
-  query.innerJoin(
+  query.join(
+    'INNER JOIN',
     'CodeSystem_Property',
     csPropertyTable,
     new Conjunction([
@@ -125,7 +129,8 @@ export function findAncestor(base: SelectQuery, codeSystem: CodeSystem, ancestor
 
   const recursiveCTE = 'cte_ancestors';
   const recursiveTable = query.getNextJoinAlias();
-  query.innerJoin(
+  query.join(
+    'INNER JOIN',
     recursiveCTE,
     recursiveTable,
     new Condition(new Column(propertyTable, 'coding'), '=', new Column(recursiveTable, 'id'))
@@ -139,7 +144,7 @@ export function findAncestor(base: SelectQuery, codeSystem: CodeSystem, ancestor
     .limit(1);
 }
 
-export function getParentProperty(codeSystem: CodeSystem): CodeSystemConceptProperty {
+export function getParentProperty(codeSystem: CodeSystem): CodeSystemProperty {
   if (codeSystem.hierarchyMeaning !== 'is-a') {
     throw new OperationOutcomeError(
       badRequest(`Invalid filter: CodeSystem ${codeSystem.url} does not have an is-a hierarchy`)
@@ -171,25 +176,31 @@ export function addDescendants(query: SelectQuery, codeSystem: CodeSystem, paren
     .where('code', '=', parentCode);
 
   const propertyTable = query.getNextJoinAlias();
-  query.innerJoin(
-    'Coding_Property',
-    propertyTable,
-    new Condition(new Column('Coding', 'id'), '=', new Column(propertyTable, 'coding'))
-  );
+  const propertyJoinCondition = new Conjunction([
+    new Condition(new Column('Coding', 'id'), '=', new Column(propertyTable, 'coding')),
+  ]);
+  if (property.id) {
+    propertyJoinCondition.where(new Column(propertyTable, 'property'), '=', property.id);
+  }
+  query.join('INNER JOIN', 'Coding_Property', propertyTable, propertyJoinCondition);
 
-  const csPropertyTable = query.getNextJoinAlias();
-  query.innerJoin(
-    'CodeSystem_Property',
-    csPropertyTable,
-    new Conjunction([
-      new Condition(new Column(propertyTable, 'property'), '=', new Column(csPropertyTable, 'id')),
-      new Condition(new Column(csPropertyTable, 'code'), '=', property.code),
-    ])
-  );
+  if (!property.id) {
+    const csPropertyTable = query.getNextJoinAlias();
+    query.join(
+      'INNER JOIN',
+      'CodeSystem_Property',
+      csPropertyTable,
+      new Conjunction([
+        new Condition(new Column(propertyTable, 'property'), '=', new Column(csPropertyTable, 'id')),
+        new Condition(new Column(csPropertyTable, 'code'), '=', property.code),
+      ])
+    );
+  }
 
   const recursiveCTE = 'cte_descendants';
   const recursiveTable = query.getNextJoinAlias();
-  query.innerJoin(
+  query.join(
+    'INNER JOIN',
     recursiveCTE,
     recursiveTable,
     new Condition(new Column(propertyTable, 'target'), '=', new Column(recursiveTable, 'id'))

@@ -145,12 +145,17 @@ export class Column {
   constructor(
     readonly tableName: string | undefined,
     readonly columnName: string,
-    readonly raw?: boolean
+    readonly raw?: boolean,
+    readonly alias?: string
   ) {}
 }
 
-export class Literal {
+export class Literal implements Expression {
   constructor(readonly value: string) {}
+
+  buildSql(sql: SqlBuilder): void {
+    sql.append(this.value);
+  }
 }
 
 export interface Expression {
@@ -263,7 +268,7 @@ export class Union implements Expression {
 
 export class Join {
   constructor(
-    readonly joinType: 'LEFT JOIN' | 'INNER JOIN',
+    readonly joinType: 'LEFT JOIN' | 'INNER JOIN' | 'INNER JOIN LATERAL',
     readonly joinItem: SelectQuery | string,
     readonly joinAlias: string,
     readonly onExpression: Expression
@@ -310,6 +315,10 @@ export class SqlBuilder {
         this.append('.');
       }
       this.appendIdentifier(column.columnName);
+    }
+    if (column.alias) {
+      this.append(' AS ');
+      this.appendIdentifier(column.alias);
     }
     return this;
   }
@@ -385,9 +394,12 @@ export abstract class BaseQuery {
   readonly tableName: string;
   readonly predicate: Conjunction;
   explain = false;
+  analyzeBuffers = false;
+  readonly alias?: string;
 
-  constructor(tableName: string) {
+  constructor(tableName: string, alias?: string) {
     this.tableName = tableName;
+    this.alias = alias;
     this.predicate = new Conjunction([]);
   }
 
@@ -416,7 +428,7 @@ interface CTE {
 }
 
 export class SelectQuery extends BaseQuery implements Expression {
-  readonly innerQuery?: SelectQuery | Union;
+  readonly innerQuery?: SelectQuery | Union | ValuesQuery;
   readonly distinctOns: Column[];
   readonly columns: (Column | Literal)[];
   readonly joins: Join[];
@@ -427,8 +439,8 @@ export class SelectQuery extends BaseQuery implements Expression {
   offset_: number;
   joinCount = 0;
 
-  constructor(tableName: string, innerQuery?: SelectQuery | Union) {
-    super(tableName);
+  constructor(tableName: string, innerQuery?: SelectQuery | Union | ValuesQuery, alias?: string) {
+    super(tableName, alias);
     this.innerQuery = innerQuery;
     this.distinctOns = [];
     this.columns = [];
@@ -464,13 +476,13 @@ export class SelectQuery extends BaseQuery implements Expression {
     return `T${this.joinCount}`;
   }
 
-  innerJoin(joinItem: SelectQuery | string, joinAlias: string, onExpression: Expression): this {
-    this.joins.push(new Join('INNER JOIN', joinItem, joinAlias, onExpression));
-    return this;
-  }
-
-  leftJoin(joinItem: SelectQuery | string, joinAlias: string, onExpression: Expression): this {
-    this.joins.push(new Join('LEFT JOIN', joinItem, joinAlias, onExpression));
+  join(
+    joinType: 'INNER JOIN' | 'INNER JOIN LATERAL' | 'LEFT JOIN',
+    joinItem: SelectQuery | string,
+    joinAlias: string,
+    onExpression: Expression
+  ): this {
+    this.joins.push(new Join(joinType, joinItem, joinAlias, onExpression));
     return this;
   }
 
@@ -497,6 +509,9 @@ export class SelectQuery extends BaseQuery implements Expression {
   buildSql(sql: SqlBuilder): void {
     if (this.explain) {
       sql.append('EXPLAIN ');
+      if (this.analyzeBuffers) {
+        sql.append('(ANALYZE, BUFFERS) ');
+      }
     }
     if (this.with) {
       sql.append('WITH ');
@@ -576,6 +591,11 @@ export class SelectQuery extends BaseQuery implements Expression {
     }
 
     sql.appendIdentifier(this.tableName);
+    if (this.alias) {
+      sql.append(' ');
+      sql.appendIdentifier(this.alias);
+      sql.append(' ');
+    }
 
     for (const join of this.joins) {
       sql.append(` ${join.joinType} `);
@@ -784,6 +804,49 @@ export class DeleteQuery extends BaseQuery {
       sql.append(` RETURNING (${this.returnColumns.join(', ')})`);
     }
     return (await sql.execute(conn)).rows;
+  }
+}
+
+export class ValuesQuery implements Expression {
+  readonly tableName: string;
+  readonly columnNames: string[];
+  readonly rows: any[][];
+  constructor(tableName: string, columnNames: string[], rows: any[][]) {
+    this.tableName = tableName;
+    this.columnNames = columnNames;
+    this.rows = rows;
+  }
+
+  buildSql(builder: SqlBuilder): void {
+    /*
+    Since a VALUES expression has a special alias format of "tableName"("columnName"),
+    wrap its sql with SELECT * FROM (VALUES ...) AS "tableName"("columnName") for compatibility
+    other query builders that may include a ValuesQuery:
+
+    SELECT * FROM (VALUES
+      ('val1'),
+		  ('val2'),
+		  ('val3'),
+    ) AS "values"("val")
+    */
+
+    builder.append('SELECT * FROM (VALUES');
+    for (let r = 0; r < this.rows.length; r++) {
+      builder.append(r === 0 ? '(' : ',(');
+      for (let v = 0; v < this.rows[r].length; v++) {
+        builder.append(v === 0 ? '' : ',');
+        builder.param(this.rows[r][v]);
+      }
+      builder.append(')');
+    }
+    builder.append(') AS ');
+    builder.appendIdentifier(this.tableName);
+    builder.append('(');
+    for (let c = 0; c < this.columnNames.length; c++) {
+      builder.append(c === 0 ? '' : ',');
+      builder.appendIdentifier(this.columnNames[c]);
+    }
+    builder.append(')');
   }
 }
 
